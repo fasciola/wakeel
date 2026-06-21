@@ -1,100 +1,149 @@
-import { useState, useEffect } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { DatabaseWorkspace, DatabaseWorkspaceMembership } from '../lib/database.types';
+import {
+  DatabaseWorkspace,
+  DatabaseWorkspaceMembership,
+} from '../lib/database.types';
 
 export function useWorkspace(userId: string | undefined) {
   const [workspaces, setWorkspaces] = useState<DatabaseWorkspace[]>([]);
-  const [activeWorkspace, setActiveWorkspace] = useState<DatabaseWorkspace | null>(null);
-  const [activeMembership, setActiveMembership] = useState<DatabaseWorkspaceMembership | null>(null);
+  const [memberships, setMemberships] = useState<
+    DatabaseWorkspaceMembership[]
+  >([]);
+  const [activeWorkspace, setActiveWorkspace] =
+    useState<DatabaseWorkspace | null>(null);
+  const [activeMembership, setActiveMembership] =
+    useState<DatabaseWorkspaceMembership | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!userId) {
+    let isMounted = true;
+
+    const clearWorkspaceState = () => {
+      if (!isMounted) return;
+
       setWorkspaces([]);
+      setMemberships([]);
       setActiveWorkspace(null);
       setActiveMembership(null);
-      setLoading(false);
+    };
+
+    const loadWorkspaces = async () => {
+      if (!userId) {
+        clearWorkspaceState();
+
+        if (isMounted) {
+          setLoading(false);
+        }
+
+        return;
+      }
+
+      if (isMounted) {
+        setLoading(true);
+      }
+
+      try {
+        const { data: membershipRows, error: membershipError } =
+          await supabase
+            .from('workspace_memberships')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('status', 'active')
+            .order('created_at', { ascending: true });
+
+        if (membershipError) {
+          throw membershipError;
+        }
+
+        const activeMemberships =
+          (membershipRows as DatabaseWorkspaceMembership[] | null) ?? [];
+
+        if (activeMemberships.length === 0) {
+          clearWorkspaceState();
+          return;
+        }
+
+        const workspaceIds = activeMemberships.map(
+          (membership) => membership.workspace_id,
+        );
+
+        const { data: workspaceRows, error: workspaceError } = await supabase
+          .from('workspaces')
+          .select('*')
+          .in('id', workspaceIds)
+          .order('created_at', { ascending: true });
+
+        if (workspaceError) {
+          throw workspaceError;
+        }
+
+        if (!isMounted) return;
+
+        const returnedWorkspaces =
+          (workspaceRows as DatabaseWorkspace[] | null) ?? [];
+
+        const workspaceById = new Map(
+          returnedWorkspaces.map((workspace) => [workspace.id, workspace]),
+        );
+
+        const orderedWorkspaces = workspaceIds
+          .map((workspaceId) => workspaceById.get(workspaceId))
+          .filter(
+            (workspace): workspace is DatabaseWorkspace =>
+              workspace !== undefined,
+          );
+
+        const nextWorkspace = orderedWorkspaces[0] ?? null;
+        const nextMembership = nextWorkspace
+          ? activeMemberships.find(
+              (membership) => membership.workspace_id === nextWorkspace.id,
+            ) ?? null
+          : null;
+
+        setWorkspaces(orderedWorkspaces);
+        setMemberships(activeMemberships);
+        setActiveWorkspace(nextWorkspace);
+        setActiveMembership(nextMembership);
+      } catch (error) {
+        console.error('Unable to load active workspaces:', error);
+        clearWorkspaceState();
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadWorkspaces();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [userId]);
+
+  const switchWorkspace = (workspaceId: string) => {
+    const workspace = workspaces.find((item) => item.id === workspaceId);
+    const membership =
+      memberships.find((item) => item.workspace_id === workspaceId) ?? null;
+
+    if (!workspace || !membership) {
       return;
     }
 
-    async function loadWorkspaces() {
-      setLoading(true);
-      try {
-        // Fetch all active workspace memberships for the user
-        const { data: memberships, error: memError } = await supabase
-          .from('workspace_memberships')
-          .select('*')
-          .eq('user_id', userId);
-
-        if (memError) throw memError;
-
-        if (memberships && memberships.length > 0) {
-          const workspaceIds = memberships.map(m => m.workspace_id);
-          
-          // Get workspace metadata
-          const { data: ws, error: wsError } = await supabase
-            .from('workspaces')
-            .select('*')
-            .in('id', workspaceIds);
-
-          if (wsError) throw wsError;
-
-          setWorkspaces(ws || []);
-          
-          // Set first workspace as active by default
-          const defaultWS = ws?.[0] || null;
-          setActiveWorkspace(defaultWS);
-
-          const defaultMem = memberships.find(m => m.workspace_id === defaultWS?.id) || null;
-          setActiveMembership(defaultMem);
-        } else {
-          // If no workspaces matched, look in profile or mock defaults
-          setWorkspaces([]);
-          setActiveWorkspace(null);
-          setActiveMembership(null);
-        }
-      } catch (err) {
-        console.error('Error loading active workspaces list:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadWorkspaces();
-  }, [userId]);
-
-  const switchWorkspace = async (workspaceId: string) => {
-    const ws = workspaces.find(w => w.id === workspaceId);
-    if (!ws) return;
-
-    setLoading(true);
-    try {
-      const { data: m } = await supabase
-        .from('workspace_memberships')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('workspace_id', workspaceId)
-        .single();
-
-      setActiveWorkspace(ws);
-      if (m) {
-        setActiveMembership(m);
-      }
-    } catch (err) {
-      console.error('Failed to switch workspace context:', err);
-    } finally {
-      setLoading(false);
-    }
+    setActiveWorkspace(workspace);
+    setActiveMembership(membership);
   };
 
   return {
     workspaces,
+    memberships,
     activeWorkspace,
     activeMembership,
     loading,
     switchWorkspace,
     setWorkspaces,
     setActiveWorkspace,
-    setActiveMembership
+    setActiveMembership,
   };
 }

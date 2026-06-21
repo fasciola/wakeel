@@ -1,85 +1,90 @@
-import { useState, useEffect } from 'react';
+﻿import { useEffect, useState } from 'react';
+import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import { DatabaseProfile } from '../lib/database.types';
 
 export function useAuth() {
-  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [currentUser, setCurrentUser] = useState<SupabaseUser | null>(null);
   const [profile, setProfile] = useState<DatabaseProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // 1. Initial Get User Session
-    async function loadUser() {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
-          setCurrentUser(session.user);
-          // Fetch associated profile
-          const { data: prof } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
+    let isMounted = true;
 
-          if (prof) {
-            setProfile(prof);
-          } else {
-            // Emulate or create default profile if missing
-            const mockProf: DatabaseProfile = {
-              id: session.user.id,
-              first_name: 'Faisal',
-              last_name: 'Al-Mansoori',
-              display_name: 'Faisal Al-Mansoori',
-              email: session.user.email || 'faisal@wakeel.ae',
-              preferred_language: 'en',
-              is_active: true,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            };
-            setProfile(mockProf);
-          }
-        } else {
-          setCurrentUser(null);
-          setProfile(null);
-        }
-      } catch (err) {
-        console.error('Error fetching auth session:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
+    const syncSession = async (session: Session | null) => {
+      const user = session?.user ?? null;
 
-    loadUser();
+      if (!isMounted) return;
 
-    // 2. Listen for Auth Changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        setCurrentUser(session.user);
-        const { data: prof } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-        if (prof) {
-          setProfile(prof);
-        }
-      } else {
-        setCurrentUser(null);
+      setCurrentUser(user);
+
+      if (!user) {
         setProfile(null);
+        setLoading(false);
+        return;
       }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (!isMounted) return;
+
+      if (error) {
+        console.error('Unable to load authenticated user profile:', error);
+        setProfile(null);
+      } else {
+        setProfile((data as DatabaseProfile | null) ?? null);
+      }
+
       setLoading(false);
+    };
+
+    const initialiseAuth = async () => {
+      setLoading(true);
+
+      const {
+        data: { session },
+        error,
+      } = await supabase.auth.getSession();
+
+      if (error) {
+        console.error('Unable to restore Supabase session:', error);
+      }
+
+      await syncSession(session);
+    };
+
+    void initialiseAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      void syncSession(session);
     });
 
     return () => {
-      subscription?.unsubscribe();
+      isMounted = false;
+      subscription.unsubscribe();
     };
   }, []);
+
+  const signOut = async () => {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      throw error;
+    }
+  };
 
   return {
     currentUser,
     profile,
     loading,
-    isAuthenticated: !!currentUser,
-    setProfile
+    isAuthenticated: Boolean(currentUser),
+    setProfile,
+    signOut,
   };
 }
