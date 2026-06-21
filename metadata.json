@@ -1,0 +1,6 @@
+{
+  "name": "Wakeel Aman | وكيل آمن",
+  "description": "Secure compliance, risk, document, and renewal-management platform for UAE Local Service Agents and business relationships.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
