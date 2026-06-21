@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useDB } from '../store/DBContext';
+import { useWorkspaceCompanies } from '../hooks/useWorkspaceCompanies';
 import { Company } from '../types';
 import { dictionary } from '../store/translations';
 import { Search, MapPin, BadgeAlert, Coins, ShieldCheck, Filter, MoreVertical, Eye, FileSignature, Trash } from 'lucide-react';
@@ -7,10 +8,21 @@ import { Search, MapPin, BadgeAlert, Coins, ShieldCheck, Filter, MoreVertical, E
 interface CompanyListProps {
   onSelectCompany: (id: string) => void;
   onNavigate: (view: string) => void;
+  workspaceId: string;
+  refreshKey: number;
 }
 
-export const CompanyList: React.FC<CompanyListProps> = ({ onSelectCompany, onNavigate }) => {
-  const { currentLanguage, companies, deleteCompany } = useDB();
+export const CompanyList: React.FC<CompanyListProps> = ({
+  onSelectCompany,
+  onNavigate,
+  workspaceId,
+  refreshKey,
+}) => {
+  const { currentLanguage } = useDB();
+  const { companies, loading, error, deleteCompany } = useWorkspaceCompanies(
+    workspaceId,
+    refreshKey,
+  );
   const t = dictionary[currentLanguage];
   const isRtl = currentLanguage === 'ar';
 
@@ -55,6 +67,18 @@ export const CompanyList: React.FC<CompanyListProps> = ({ onSelectCompany, onNav
           <span>➕ {t.newCompanyWizardBtn}</span>
         </button>
       </div>
+
+      {loading && (
+        <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs font-semibold text-indigo-700">
+          Loading companies in this workspace...
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-semibold text-rose-700">
+          {error}
+        </div>
+      )}
 
       {/* Advanced Filters Desk */}
       <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
@@ -212,7 +236,17 @@ export const CompanyList: React.FC<CompanyListProps> = ({ onSelectCompany, onNav
                         Inspect Tab
                       </button>
                       <button 
-                        onClick={() => deleteCompany(c.id)}
+                        onClick={async () => {
+                          try {
+                            await deleteCompany(c.id);
+                          } catch (error) {
+                            window.alert(
+                              error instanceof Error
+                                ? error.message
+                                : 'Unable to archive the company.',
+                            );
+                          }
+                        }}
                         className="p-1.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition"
                         title="Archive client"
                       >
@@ -290,7 +324,17 @@ export const CompanyList: React.FC<CompanyListProps> = ({ onSelectCompany, onNav
                     Quick View
                   </button>
                   <button 
-                    onClick={() => deleteCompany(c.id)}
+                    onClick={async () => {
+                          try {
+                            await deleteCompany(c.id);
+                          } catch (error) {
+                            window.alert(
+                              error instanceof Error
+                                ? error.message
+                                : 'Unable to archive the company.',
+                            );
+                          }
+                        }}
                     className="p-1 text-red-500 font-bold text-xs"
                   >
                     Archive

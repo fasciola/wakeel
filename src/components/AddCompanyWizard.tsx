@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useDB } from '../store/DBContext';
+import { supabase } from '../lib/supabase';
 import { Company, Contact } from '../types';
 import { dictionary } from '../store/translations';
 import { Plus, Check, ChevronRight, ChevronLeft, Upload, ShieldAlert, FileText, UserCheck } from 'lucide-react';
@@ -7,10 +8,17 @@ import { Plus, Check, ChevronRight, ChevronLeft, Upload, ShieldAlert, FileText, 
 interface WizardProps {
   onClose: () => void;
   onSuccess: () => void;
+  workspaceId: string;
+  userId: string;
 }
 
-export const AddCompanyWizard: React.FC<WizardProps> = ({ onClose, onSuccess }) => {
-  const { currentLanguage, addCompany, addContact, addDocument } = useDB();
+export const AddCompanyWizard: React.FC<WizardProps> = ({
+  onClose,
+  onSuccess,
+  workspaceId,
+  userId,
+}) => {
+  const { currentLanguage } = useDB();
   const t = dictionary[currentLanguage];
   const isRtl = currentLanguage === 'ar';
 
@@ -47,6 +55,7 @@ export const AddCompanyWizard: React.FC<WizardProps> = ({ onClose, onSuccess }) 
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   const validateStep = () => {
     const newErrors: Record<string, string> = {};
@@ -72,70 +81,83 @@ export const AddCompanyWizard: React.FC<WizardProps> = ({ onClose, onSuccess }) 
     setStep(prev => prev - 1);
   };
 
-  const handleFormSubmit = () => {
-    if (!validateStep()) return;
+  const handleFormSubmit = async () => {
+    if (!validateStep() || submitting) return;
 
-    // 1. Submit Contact record
-    const contactId = addContact({
-      fullName: formData.investorName,
-      fullNameAr: formData.investorLang === 'ar' ? formData.investorName : undefined,
-      email: formData.investorEmail,
-      phone: formData.investorPhone,
-      nationality: 'Foreign National',
-      preferredLanguage: formData.investorLang,
-      relationshipStatus: 'Active',
-      refNumber: 'REG-NEW'
-    });
+    setSubmitting(true);
 
-    // 2. Submit Company record
-    const companyId = addCompany({
-      legalNameEn: formData.legalNameEn,
-      legalNameAr: formData.legalNameAr,
-      tradeLicenceNumber: formData.tradeLicenceNumber,
-      emirate: formData.emirate,
-      legalForm: formData.legalForm,
-      businessActivity: formData.businessActivity,
-      registrationDate: formData.agreementStartDate,
-      licenceIssueDate: formData.agreementStartDate,
-      licenceExpiryDate: formData.licenceExpiryDate,
-      companyStatus: 'Active',
-      annualFee: Number(formData.annualFee),
-      feeCurrency: formData.feeCurrency,
-      relationshipType: formData.relationshipType,
-      notes: 'Initial wizard enrollment portfolio.'
-    });
+    try {
+      const {
+        data: { user: authenticatedUser },
+        error: authenticatedUserError,
+      } = await supabase.auth.getUser();
 
-    // 3. Upload simulated Trade Licence Doc
-    addDocument({
-      companyId,
-      documentType: 'Trade Licence',
-      title: `Trade Licence copy - ${formData.tradeLicenceNumber}`,
-      filePath: `/vault/w1/${companyId}/trade_license_wizard.pdf`,
-      mimeType: 'application/pdf',
-      fileSize: 450,
-      issueDate: formData.agreementStartDate,
-      expiryDate: formData.licenceExpiryDate,
-      verificationStatus: 'Pending Review',
-      uploadedBy: 'u1',
-      notes: 'Onboarded via enrollment wizard.'
-    });
+      if (authenticatedUserError || !authenticatedUser) {
+        throw new Error('Your sign-in session has expired. Please sign in again.');
+      }
 
-    // 4. Upload simulated LSA Agreement Doc
-    addDocument({
-      companyId,
-      documentType: 'Local Service Agent Agreement',
-      title: `LSA Agreement - Partner Signed Copy`,
-      filePath: `/vault/w1/${companyId}/lsa_agreement_wizard.pdf`,
-      mimeType: 'application/pdf',
-      fileSize: 1100,
-      issueDate: formData.agreementStartDate,
-      expiryDate: formData.agreementEndDate,
-      verificationStatus: 'Verified',
-      uploadedBy: 'u1',
-      notes: 'LSA legal agreement validated by Owner.'
-    });
+      if (authenticatedUser.id !== userId) {
+        console.error('Company enrollment identity mismatch:', {
+          sessionUserId: authenticatedUser.id,
+          propUserId: userId,
+          workspaceId,
+        });
 
-    onSuccess();
+        throw new Error(
+          'Your sign-in session does not match the selected workspace. Please sign out and sign in again.',
+        );
+      }
+
+      const { data: companyId, error: enrollmentError } = await supabase.rpc(
+        'create_company_enrollment',
+        {
+          p_workspace_id: workspaceId,
+          p_legal_name_en: formData.legalNameEn.trim(),
+          p_legal_name_ar: formData.legalNameAr.trim(),
+          p_trade_licence_number: formData.tradeLicenceNumber.trim(),
+          p_emirate: formData.emirate,
+          p_legal_form: formData.legalForm.trim(),
+          p_business_activity: formData.businessActivity.trim(),
+          p_registration_date: formData.agreementStartDate,
+          p_licence_issue_date: formData.agreementStartDate,
+          p_licence_expiry_date: formData.licenceExpiryDate,
+          p_annual_fee: Number(formData.annualFee),
+          p_fee_currency: formData.feeCurrency,
+          p_relationship_type: formData.relationshipType,
+          p_investor_name: formData.investorName.trim(),
+          p_investor_name_ar:
+            formData.investorLang === 'ar'
+              ? formData.investorName.trim()
+              : '',
+          p_investor_email: formData.investorEmail.trim().toLowerCase(),
+          p_investor_phone: formData.investorPhone.trim(),
+          p_investor_language: formData.investorLang,
+        },
+      );
+
+      if (enrollmentError || !companyId) {
+        throw new Error(
+          enrollmentError?.message || 'Unable to create the company enrollment.',
+        );
+      }
+
+      console.info('Company enrollment saved:', {
+        companyId,
+        userId: authenticatedUser.id,
+        workspaceId,
+      });
+
+      onSuccess();
+    } catch (error) {
+      console.error('Unable to save company enrollment:', error);
+      window.alert(
+        error instanceof Error
+          ? error.message
+          : 'Unable to save this company. Please try again.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (

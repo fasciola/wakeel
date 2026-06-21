@@ -29,6 +29,7 @@ function AppContent({ authProps }: { authProps: any }) {
   const [activeView, setActiveView] = useState<string>('overview');
   const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState<boolean>(false);
+  const [companyRefreshKey, setCompanyRefreshKey] = useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
 
   // Switch views beautifully
@@ -204,7 +205,14 @@ function AppContent({ authProps }: { authProps: any }) {
         {/* View render hub */}
         <div className="flex-1 p-6 space-y-6 max-w-7xl mx-auto w-full">
           {activeView === 'overview' && <Dashboard onNavigate={handleNavigate} />}
-          {activeView === 'companies' && <CompanyList onSelectCompany={handleSelectCompany} onNavigate={handleNavigate} />}
+          {activeView === 'companies' && (
+            <CompanyList
+              onSelectCompany={handleSelectCompany}
+              onNavigate={handleNavigate}
+              workspaceId={authProps.workspace.id}
+              refreshKey={companyRefreshKey}
+            />
+          )}
           {activeView === 'company_details' && selectedCompanyId && (
             <CompanyDetail companyId={selectedCompanyId} onBack={() => setActiveView('companies')} />
           )}
@@ -221,10 +229,13 @@ function AppContent({ authProps }: { authProps: any }) {
 
       {/* Guided enrollment Wizard Overlay */}
       {wizardOpen && (
-        <AddCompanyWizard 
+        <AddCompanyWizard
+          workspaceId={authProps.workspace.id}
+          userId={authProps.userId}
           onClose={() => setWizardOpen(false)}
           onSuccess={() => {
             setWizardOpen(false);
+            setCompanyRefreshKey((currentKey) => currentKey + 1);
             setActiveView('companies');
           }}
         />
